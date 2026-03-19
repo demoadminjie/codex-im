@@ -19,6 +19,7 @@ Codex 操作都留在 本地，飞书只负责消息交互。
 - `/codex where` 查看当前项目/线程
 - `/codex build8123 <projectName>` 切换 nginx 8123 指向的 dist 目录并重载配置
 - `/codex build2223 <projectName>` 切换 nginx 2223 指向的 dist 目录并重载配置
+- `/codex list` / `/codex list <相对目录路径>` 查看当前项目目录清单
 - `/codex workspace` 查看当前会话已记录项目和线程
 - `/codex remove /绝对路径` 移除会话绑定项目
 - `/codex send <相对文件路径>` 发送当前绑定项目内的文件
@@ -105,6 +106,8 @@ npm run feishu-bot
 - `/codex where`
 - `/codex build8123 <projectName>`
 - `/codex build2223 <projectName>`
+- `/codex list`
+- `/codex list <相对目录路径>`
 - `/codex workspace`
 - `/codex remove /绝对路径`
 - `/codex send <相对文件路径>`

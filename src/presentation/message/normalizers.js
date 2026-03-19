@@ -121,6 +121,7 @@ function parseCommand(text) {
     inspect_message: ["message"],
     help: ["help"],
     workspace: ["workspace"],
+    list: ["list"],
     build8123: ["build8123"],
     build2223: ["build2223"],
     remove: ["remove"],
@@ -140,6 +141,9 @@ function parseCommand(text) {
 
   if (matchesPrefixCommand(normalized, "switch")) {
     return "switch";
+  }
+  if (matchesPrefixCommand(normalized, "list")) {
+    return "list";
   }
   if (matchesPrefixCommand(normalized, "build8123")) {
     return "build8123";

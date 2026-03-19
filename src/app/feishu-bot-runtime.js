@@ -260,6 +260,7 @@ function attachRuntimeForwarders() {
     handleBindCommand: workspaceRuntime.handleBindCommand,
     handleBuild8123Command: workspaceRuntime.handleBuild8123Command,
     handleBuild2223Command: workspaceRuntime.handleBuild2223Command,
+    handleListCommand: workspaceRuntime.handleListCommand,
     handleWhereCommand: workspaceRuntime.handleWhereCommand,
     showStatusPanel: workspaceRuntime.showStatusPanel,
     handleMessageCommand: workspaceRuntime.handleMessageCommand,

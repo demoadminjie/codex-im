@@ -22,6 +22,10 @@ function extractSendPath(text) {
   return extractCommandArgument(text, "/codex send ");
 }
 
+function extractListPath(text) {
+  return extractCommandArgument(text, "/codex list ");
+}
+
 function extractModelValue(text) {
   return extractCommandArgument(text, "/codex model ");
 }
@@ -44,6 +48,7 @@ module.exports = {
   extractBuild8123ProjectName,
   extractBuild2223ProjectName,
   extractEffortValue,
+  extractListPath,
   extractModelValue,
   extractRemoveWorkspacePath,
   extractSendPath,

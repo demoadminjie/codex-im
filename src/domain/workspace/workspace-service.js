@@ -13,6 +13,7 @@ const {
   extractBuild8123ProjectName,
   extractBuild2223ProjectName,
   extractEffortValue,
+  extractListPath,
   extractModelValue,
   extractRemoveWorkspacePath,
   extractSendPath,
@@ -30,6 +31,7 @@ const MAX_FEISHU_UPLOAD_FILE_BYTES = 30 * 1024 * 1024;
 const NGINX_CONFIG_PATH = "/usr/local/etc/nginx/nginx.conf";
 const NGINX_APPS_ROOT = "/usr/local/var/www/workplace/apps";
 const VALID_PROJECT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+const MAX_DIRECTORY_LIST_ITEMS_PER_GROUP = 100;
 const execFileAsync = promisify(execFile);
 
 async function resolveWorkspaceContext(
@@ -358,6 +360,74 @@ async function handleSendCommand(runtime, normalized) {
   }
 }
 
+async function handleListCommand(runtime, normalized) {
+  const workspaceContext = await resolveWorkspaceContext(runtime, normalized, {
+    replyToMessageId: normalized.messageId,
+    missingWorkspaceText: "当前会话还未绑定项目。先发送 `/codex bind /绝对路径`。",
+  });
+  if (!workspaceContext) {
+    return;
+  }
+  const { workspaceRoot } = workspaceContext;
+
+  const requestedPath = extractListPath(normalized.text);
+  const resolvedTarget = resolveWorkspaceListTarget(workspaceRoot, requestedPath);
+  if (resolvedTarget.errorText) {
+    await runtime.sendInfoCardMessage({
+      chatId: normalized.chatId,
+      replyToMessageId: normalized.messageId,
+      text: resolvedTarget.errorText,
+    });
+    return;
+  }
+
+  let targetStats;
+  try {
+    targetStats = await fs.promises.stat(resolvedTarget.directoryPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      await runtime.sendInfoCardMessage({
+        chatId: normalized.chatId,
+        replyToMessageId: normalized.messageId,
+        text: `目录不存在: ${resolvedTarget.displayPath}`,
+      });
+      return;
+    }
+    throw error;
+  }
+
+  if (!targetStats.isDirectory()) {
+    await runtime.sendInfoCardMessage({
+      chatId: normalized.chatId,
+      replyToMessageId: normalized.messageId,
+      text: `只支持列出目录，不支持文件: ${resolvedTarget.displayPath}`,
+    });
+    return;
+  }
+
+  try {
+    const entries = await fs.promises.readdir(resolvedTarget.directoryPath, { withFileTypes: true });
+    await runtime.sendInfoCardMessage({
+      chatId: normalized.chatId,
+      replyToMessageId: normalized.messageId,
+      text: buildDirectoryListText({
+        workspaceRoot,
+        displayPath: resolvedTarget.displayPath,
+        entries,
+      }),
+    });
+  } catch (error) {
+    console.warn(
+      `[codex-im] directory/list failed workspace=${workspaceRoot} path=${resolvedTarget.displayPath}: ${error.message}`
+    );
+    await runtime.sendInfoCardMessage({
+      chatId: normalized.chatId,
+      replyToMessageId: normalized.messageId,
+      text: formatFailureText("列出目录失败", error),
+    });
+  }
+}
+
 async function handleModelCommand(runtime, normalized) {
   const workspaceContext = await resolveCodexSettingWorkspaceContext(runtime, normalized);
   if (!workspaceContext) {
@@ -652,6 +722,7 @@ module.exports = {
   handleBuild2223Command,
   handleEffortCommand,
   handleHelpCommand,
+  handleListCommand,
   handleMessageCommand,
   handleModelCommand,
   handleRemoveCommand,
@@ -901,6 +972,96 @@ function findMatchingBraceIndex(text, openBraceIndex) {
 
 function stripNginxComments(text) {
   return String(text || "").replace(/#[^\n]*/g, (match) => " ".repeat(match.length));
+}
+
+function resolveWorkspaceListTarget(workspaceRoot, requestedPath) {
+  const normalizedInput = normalizeWorkspacePath(requestedPath);
+  if (!normalizedInput) {
+    return {
+      directoryPath: workspaceRoot,
+      displayPath: ".",
+    };
+  }
+  if (isAbsoluteWorkspacePath(normalizedInput)) {
+    return { errorText: "只支持当前项目下的相对路径，不支持绝对路径。" };
+  }
+
+  const directoryPath = path.resolve(workspaceRoot, requestedPath);
+  const normalizedResolvedPath = normalizeWorkspacePath(directoryPath);
+  if (!pathMatchesWorkspaceRoot(normalizedResolvedPath, workspaceRoot)) {
+    return { errorText: "目录路径超出了当前项目根目录。" };
+  }
+
+  return {
+    directoryPath,
+    displayPath: normalizeWorkspacePath(path.relative(workspaceRoot, directoryPath)) || ".",
+  };
+}
+
+function buildDirectoryListText({ workspaceRoot, displayPath, entries }) {
+  const categorized = categorizeDirectoryEntries(entries);
+  const totalCount = categorized.directories.length + categorized.files.length + categorized.others.length;
+  const lines = [
+    "**目录清单**",
+    `项目根目录：\`${workspaceRoot}\``,
+    `当前路径：\`${displayPath}\``,
+    `共 ${totalCount} 项，目录 ${categorized.directories.length}，文件 ${categorized.files.length}，其他 ${categorized.others.length}`,
+  ];
+
+  if (!totalCount) {
+    lines.push("", "该目录为空。");
+    return lines.join("\n");
+  }
+
+  appendDirectoryListSection(lines, "目录", categorized.directories, { suffix: "/" });
+  appendDirectoryListSection(lines, "文件", categorized.files);
+  appendDirectoryListSection(lines, "其他", categorized.others, { suffix: "*" });
+
+  return lines.join("\n");
+}
+
+function categorizeDirectoryEntries(entries) {
+  const directories = [];
+  const files = [];
+  const others = [];
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const name = String(entry?.name || "").trim();
+    if (!name) {
+      continue;
+    }
+    if (entry.isDirectory()) {
+      directories.push(name);
+      continue;
+    }
+    if (entry.isFile()) {
+      files.push(name);
+      continue;
+    }
+    others.push(name);
+  }
+
+  const sortNames = (items) => items.sort((left, right) => left.localeCompare(right, "zh-Hans-CN"));
+  sortNames(directories);
+  sortNames(files);
+  sortNames(others);
+
+  return { directories, files, others };
+}
+
+function appendDirectoryListSection(lines, label, names, { suffix = "" } = {}) {
+  if (!Array.isArray(names) || !names.length) {
+    return;
+  }
+
+  const displayItems = names.slice(0, MAX_DIRECTORY_LIST_ITEMS_PER_GROUP);
+  lines.push("", `${label}（${names.length}）`);
+  for (const name of displayItems) {
+    lines.push(`- \`${name}${suffix}\``);
+  }
+  if (displayItems.length < names.length) {
+    lines.push(`- ... 还有 ${names.length - displayItems.length} 项未展示`);
+  }
 }
 
 function resolveWorkspaceSendTarget(workspaceRoot, requestedPath) {
