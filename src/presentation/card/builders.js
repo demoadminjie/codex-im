@@ -459,6 +459,16 @@ function buildHelpCardText() {
       "查看当前绑定的项目和正在使用的线程。",
     ],
     [
+      "**切换 8123 构建目录**",
+      "`/codex build8123 <projectName>`",
+      "把 Nginx 8123 端口的 dist 目录切到指定项目并重载配置。",
+    ],
+    [
+      "**切换 2223 构建目录**",
+      "`/codex build2223 <projectName>`",
+      "把 Nginx 2223 端口的 dist 目录切到指定项目并重载配置。",
+    ],
+    [
       "**查看最近消息**",
       "`/codex message`",
       "查看当前线程最近几轮对话。",

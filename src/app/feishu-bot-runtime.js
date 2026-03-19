@@ -258,6 +258,8 @@ function attachRuntimeForwarders() {
     tryAutoApproveRequest: approvalPolicyRuntime.tryAutoApproveRequest,
     applyApprovalDecision: approvalRuntime.applyApprovalDecision,
     handleBindCommand: workspaceRuntime.handleBindCommand,
+    handleBuild8123Command: workspaceRuntime.handleBuild8123Command,
+    handleBuild2223Command: workspaceRuntime.handleBuild2223Command,
     handleWhereCommand: workspaceRuntime.handleWhereCommand,
     showStatusPanel: workspaceRuntime.showStatusPanel,
     handleMessageCommand: workspaceRuntime.handleMessageCommand,

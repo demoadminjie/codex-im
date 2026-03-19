@@ -8,6 +8,8 @@ const {
 const TEXT_COMMAND_HANDLER_METHODS = {
   stop: "handleStopCommand",
   bind: "handleBindCommand",
+  build8123: "handleBuild8123Command",
+  build2223: "handleBuild2223Command",
   where: "handleWhereCommand",
   inspect_message: "handleMessageCommand",
   help: "handleHelpCommand",

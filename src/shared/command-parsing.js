@@ -2,6 +2,14 @@ function extractBindPath(text) {
   return extractCommandArgument(text, "/codex bind ");
 }
 
+function extractBuild8123ProjectName(text) {
+  return extractCommandArgument(text, "/codex build8123 ");
+}
+
+function extractBuild2223ProjectName(text) {
+  return extractCommandArgument(text, "/codex build2223 ");
+}
+
 function extractSwitchThreadId(text) {
   return extractCommandArgument(text, "/codex switch ");
 }
@@ -33,6 +41,8 @@ function extractCommandArgument(text, prefix) {
 
 module.exports = {
   extractBindPath,
+  extractBuild8123ProjectName,
+  extractBuild2223ProjectName,
   extractEffortValue,
   extractModelValue,
   extractRemoveWorkspacePath,

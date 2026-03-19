@@ -1,5 +1,7 @@
 const fs = require("fs");
 const path = require("path");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
 const {
   isAbsoluteWorkspacePath,
   isWorkspaceAllowed,
@@ -8,6 +10,8 @@ const {
 } = require("../../shared/workspace-paths");
 const {
   extractBindPath,
+  extractBuild8123ProjectName,
+  extractBuild2223ProjectName,
   extractEffortValue,
   extractModelValue,
   extractRemoveWorkspacePath,
@@ -23,6 +27,10 @@ const codexMessageUtils = require("../../infra/codex/message-utils");
 const { formatFailureText } = require("../../shared/error-text");
 
 const MAX_FEISHU_UPLOAD_FILE_BYTES = 30 * 1024 * 1024;
+const NGINX_CONFIG_PATH = "/usr/local/etc/nginx/nginx.conf";
+const NGINX_APPS_ROOT = "/usr/local/var/www/workplace/apps";
+const VALID_PROJECT_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+const execFileAsync = promisify(execFile);
 
 async function resolveWorkspaceContext(
   runtime,
@@ -107,8 +115,57 @@ async function handleBindCommand(runtime, normalized) {
   });
 }
 
+async function handleBuild8123Command(runtime, normalized) {
+  await handleBuildCommand(runtime, normalized, {
+    port: 8123,
+    commandName: "build8123",
+    extractProjectName: extractBuild8123ProjectName,
+  });
+}
+
+async function handleBuild2223Command(runtime, normalized) {
+  await handleBuildCommand(runtime, normalized, {
+    port: 2223,
+    commandName: "build2223",
+    extractProjectName: extractBuild2223ProjectName,
+  });
+}
+
 async function handleWhereCommand(runtime, normalized) {
   await showStatusPanel(runtime, normalized);
+}
+
+async function handleBuildCommand(runtime, normalized, { port, commandName, extractProjectName }) {
+  const projectName = extractProjectName(normalized.text);
+  if (!projectName) {
+    await runtime.sendInfoCardMessage({
+      chatId: normalized.chatId,
+      replyToMessageId: normalized.messageId,
+      text: `用法: \`/codex ${commandName} <projectName>\``,
+    });
+    return;
+  }
+
+  try {
+    const result = await updateNginxProjectRootAndReload({
+      port,
+      projectName,
+    });
+    await runtime.sendInfoCardMessage({
+      chatId: normalized.chatId,
+      replyToMessageId: normalized.messageId,
+      text: buildNginxBuildSuccessText(result),
+    });
+  } catch (error) {
+    console.warn(
+      `[codex-im] nginx/build failed port=${port} project=${projectName}: ${error.message}`
+    );
+    await runtime.sendInfoCardMessage({
+      chatId: normalized.chatId,
+      replyToMessageId: normalized.messageId,
+      text: formatFailureText("更新 Nginx 配置失败", error),
+    });
+  }
 }
 
 async function showStatusPanel(runtime, normalized, { replyToMessageId, noticeText = "" } = {}) {
@@ -591,6 +648,8 @@ async function removeWorkspaceByPath(runtime, normalized, workspaceRoot, { reply
 
 module.exports = {
   handleBindCommand,
+  handleBuild8123Command,
+  handleBuild2223Command,
   handleEffortCommand,
   handleHelpCommand,
   handleMessageCommand,
@@ -607,6 +666,242 @@ module.exports = {
   switchWorkspaceByPath,
   validateDefaultCodexParamsConfig,
 };
+
+function buildNginxBuildSuccessText({ port, projectName, targetRoot, previousRoot, changed }) {
+  const lines = [
+    `已更新 ${port} 端口映射到项目：\`${projectName}\``,
+    `当前 root：\`${targetRoot}\``,
+  ];
+  if (changed && previousRoot && previousRoot !== targetRoot) {
+    lines.splice(1, 0, `旧 root：\`${previousRoot}\``);
+  }
+  lines.push("", "已执行 `nginx -t -c /usr/local/etc/nginx/nginx.conf` 和 `nginx -s reload -c /usr/local/etc/nginx/nginx.conf`。");
+  return lines.join("\n");
+}
+
+async function updateNginxProjectRootAndReload({ port, projectName }) {
+  const normalizedProjectName = String(projectName || "").trim();
+  validateProjectName(normalizedProjectName);
+
+  const targetRoot = path.join(NGINX_APPS_ROOT, normalizedProjectName, "dist");
+  await ensureDirectoryExists(targetRoot, {
+    missingText: `项目 dist 目录不存在: ${targetRoot}`,
+    invalidText: `项目 dist 路径不是目录: ${targetRoot}`,
+  });
+
+  const originalConfig = await fs.promises.readFile(NGINX_CONFIG_PATH, "utf8");
+  const updateResult = updateNginxRootForPort(originalConfig, port, targetRoot);
+  const shouldWrite = updateResult.updatedConfig !== originalConfig;
+
+  if (shouldWrite) {
+    await fs.promises.writeFile(NGINX_CONFIG_PATH, updateResult.updatedConfig, "utf8");
+  }
+
+  try {
+    await runNginxCommand(["-t", "-c", NGINX_CONFIG_PATH], "nginx 配置校验失败");
+    await runNginxCommand(["-s", "reload", "-c", NGINX_CONFIG_PATH], "nginx 重载失败");
+  } catch (error) {
+    if (shouldWrite) {
+      await restoreNginxConfig(originalConfig);
+    }
+    throw error;
+  }
+
+  return {
+    port,
+    projectName: normalizedProjectName,
+    targetRoot,
+    previousRoot: updateResult.previousRoot,
+    changed: shouldWrite,
+  };
+}
+
+async function ensureDirectoryExists(directoryPath, { missingText, invalidText }) {
+  let stats;
+  try {
+    stats = await fs.promises.stat(directoryPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(missingText);
+    }
+    throw error;
+  }
+
+  if (!stats.isDirectory()) {
+    throw new Error(invalidText);
+  }
+}
+
+async function restoreNginxConfig(originalConfig) {
+  try {
+    await fs.promises.writeFile(NGINX_CONFIG_PATH, originalConfig, "utf8");
+  } catch (error) {
+    throw new Error(`回滚 Nginx 配置失败: ${error.message}`);
+  }
+}
+
+async function runNginxCommand(args, failurePrefix) {
+  try {
+    await execFileAsync("nginx", args, { encoding: "utf8" });
+  } catch (error) {
+    const detail = formatExecFileError(error);
+    throw new Error(detail ? `${failurePrefix}: ${detail}` : failurePrefix);
+  }
+}
+
+function formatExecFileError(error) {
+  const output = [
+    typeof error?.stderr === "string" ? error.stderr.trim() : "",
+    typeof error?.stdout === "string" ? error.stdout.trim() : "",
+    typeof error?.message === "string" ? error.message.trim() : "",
+  ].find(Boolean);
+  return output || "";
+}
+
+function validateProjectName(projectName) {
+  if (!projectName) {
+    throw new Error("projectName 不能为空。");
+  }
+  if (!VALID_PROJECT_NAME_PATTERN.test(projectName)) {
+    throw new Error("projectName 只允许字母、数字、点、下划线和中划线。");
+  }
+}
+
+function updateNginxRootForPort(configText, port, targetRoot) {
+  const sanitizedConfig = stripNginxComments(configText);
+  const serverBlocks = findNginxBlocks(configText, sanitizedConfig, /^[ \t]*server\s*\{/gm);
+  const matchedServerBlocks = serverBlocks.filter((block) => serverBlockListensOnPort(block.sanitizedContent, port));
+
+  if (!matchedServerBlocks.length) {
+    throw new Error(`未找到 listen ${port}; 对应的 server 配置。`);
+  }
+  if (matchedServerBlocks.length > 1) {
+    throw new Error(`找到多个 listen ${port}; 的 server 配置，拒绝自动修改。`);
+  }
+
+  const matchedServerBlock = matchedServerBlocks[0];
+  const updatedServerBlock = updateServerBlockRoot(matchedServerBlock, port, targetRoot);
+
+  return {
+    updatedConfig: [
+      configText.slice(0, matchedServerBlock.start),
+      updatedServerBlock.content,
+      configText.slice(matchedServerBlock.end),
+    ].join(""),
+    previousRoot: updatedServerBlock.previousRoot,
+  };
+}
+
+function updateServerBlockRoot(serverBlock, port, targetRoot) {
+  const locationBlocks = findNginxBlocks(
+    serverBlock.content,
+    serverBlock.sanitizedContent,
+    /^[ \t]*location[ \t]+\/[ \t]*\{/gm
+  );
+  if (locationBlocks.length > 1) {
+    throw new Error(`listen ${port}; 的 server 配置中存在多个 location /，拒绝自动修改。`);
+  }
+
+  const targetBlock = locationBlocks[0] || {
+    start: 0,
+    end: serverBlock.content.length,
+    content: serverBlock.content,
+  };
+  const updatedTargetBlock = replaceRootDirective(targetBlock.content, targetRoot);
+  if (!updatedTargetBlock) {
+    const scopeLabel = locationBlocks.length ? `listen ${port}; 的 location /` : `listen ${port}; 的 server`;
+    throw new Error(`${scopeLabel} 中未找到 root 指令。`);
+  }
+
+  if (!locationBlocks.length) {
+    return {
+      content: updatedTargetBlock.content,
+      previousRoot: updatedTargetBlock.previousRoot,
+    };
+  }
+
+  return {
+    content: [
+      serverBlock.content.slice(0, targetBlock.start),
+      updatedTargetBlock.content,
+      serverBlock.content.slice(targetBlock.end),
+    ].join(""),
+    previousRoot: updatedTargetBlock.previousRoot,
+  };
+}
+
+function replaceRootDirective(blockContent, targetRoot) {
+  const rootMatch = /^([ \t]*root[ \t]+)([^;\n]+)(;[^\n]*)$/m.exec(blockContent);
+  if (!rootMatch) {
+    return null;
+  }
+
+  return {
+    content: [
+      blockContent.slice(0, rootMatch.index),
+      rootMatch[1],
+      targetRoot,
+      rootMatch[3],
+      blockContent.slice(rootMatch.index + rootMatch[0].length),
+    ].join(""),
+    previousRoot: rootMatch[2].trim(),
+  };
+}
+
+function serverBlockListensOnPort(serverBlockText, port) {
+  const listenPattern = new RegExp(`^[ \\t]*listen[ \\t]+${port}(?:[ \\t]+[^\\n;]+)?;`, "m");
+  return listenPattern.test(serverBlockText);
+}
+
+function findNginxBlocks(sourceText, sanitizedText, openerPattern) {
+  const blocks = [];
+  const pattern = new RegExp(openerPattern.source, openerPattern.flags);
+  let match = pattern.exec(sanitizedText);
+  while (match) {
+    const openBraceIndex = sanitizedText.indexOf("{", match.index);
+    const closeBraceIndex = findMatchingBraceIndex(sanitizedText, openBraceIndex);
+    if (closeBraceIndex < 0) {
+      throw new Error("Nginx 配置存在未闭合的大括号。");
+    }
+
+    blocks.push({
+      start: match.index,
+      end: closeBraceIndex + 1,
+      content: sourceText.slice(match.index, closeBraceIndex + 1),
+      sanitizedContent: sanitizedText.slice(match.index, closeBraceIndex + 1),
+    });
+
+    pattern.lastIndex = closeBraceIndex + 1;
+    match = pattern.exec(sanitizedText);
+  }
+
+  return blocks;
+}
+
+function findMatchingBraceIndex(text, openBraceIndex) {
+  if (openBraceIndex < 0 || text[openBraceIndex] !== "{") {
+    return -1;
+  }
+
+  let depth = 0;
+  for (let index = openBraceIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function stripNginxComments(text) {
+  return String(text || "").replace(/#[^\n]*/g, (match) => " ".repeat(match.length));
+}
 
 function resolveWorkspaceSendTarget(workspaceRoot, requestedPath) {
   const normalizedInput = normalizeWorkspacePath(requestedPath);
