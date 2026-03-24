@@ -186,8 +186,8 @@ async function upsertAssistantReplyCard(
     };
   }
 
-  if (typeof text === "string" && text.trim()) {
-    existing.text = mergeReplyText(existing.text, text.trim());
+  if (typeof text === "string" && text.length > 0) {
+    existing.text = mergeReplyText(existing.text, text);
   }
   existing.chatId = chatId;
   existing.replyToMessageId = runtime.pendingChatContextByThreadId.get(threadId)?.messageId || existing.replyToMessageId || "";

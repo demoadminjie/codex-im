@@ -31,7 +31,7 @@ function mapCodexMessageToImEvent(message) {
   const turnId = extractTurnIdentifier(params);
 
   if (isAssistantMessageMethod(method, params)) {
-    const text = extractAssistantText(params);
+    const text = extractAssistantText(method, params);
     if (!text) {
       return null;
     }
@@ -257,26 +257,13 @@ function eventShouldClearPendingReaction(event) {
   return false;
 }
 
-function extractAssistantText(params) {
-  const directText = [
-    params?.delta,
-    params?.item?.text,
-  ];
-  for (const value of directText) {
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
+function extractAssistantText(method, params) {
+  if (method === "item/agentMessage/delta") {
+    return typeof params?.delta === "string" ? params.delta : "";
   }
 
-  const contentObjects = [
-    params?.item?.content,
-    params?.content,
-  ];
-  for (const content of contentObjects) {
-    const extracted = extractTextFromContent(content);
-    if (extracted) {
-      return extracted;
-    }
+  if (method === "item/completed" && looksLikeAssistantPayload(params)) {
+    return typeof params?.item?.text === "string" ? params.item.text : "";
   }
 
   return "";
