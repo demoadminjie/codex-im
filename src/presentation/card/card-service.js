@@ -8,6 +8,7 @@ const {
   buildAssistantReplyCard,
   buildCardResponse,
   buildInfoCard,
+  mergeCompletedReplyText,
   mergeReplyText,
 } = require("./builders");
 
@@ -145,7 +146,7 @@ async function sendCardActionFeedback(runtime, data, text, kind = "info") {
 
 async function upsertAssistantReplyCard(
   runtime,
-  { threadId, turnId, chatId, text, state, deferFlush = false }
+  { threadId, turnId, chatId, text, textMergeMode = "delta", state, deferFlush = false }
 ) {
   if (!threadId || !chatId) {
     return;
@@ -187,7 +188,9 @@ async function upsertAssistantReplyCard(
   }
 
   if (typeof text === "string" && text.length > 0) {
-    existing.text = mergeReplyText(existing.text, text);
+    existing.text = textMergeMode === "snapshot"
+      ? mergeCompletedReplyText(existing.text, text)
+      : mergeReplyText(existing.text, text);
   }
   existing.chatId = chatId;
   existing.replyToMessageId = runtime.pendingChatContextByThreadId.get(threadId)?.messageId || existing.replyToMessageId || "";

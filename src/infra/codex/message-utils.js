@@ -41,6 +41,7 @@ function mapCodexMessageToImEvent(message) {
         threadId,
         turnId,
         text,
+        textMergeMode: method === "item/completed" ? "snapshot" : "delta",
       },
     };
   }

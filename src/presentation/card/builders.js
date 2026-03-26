@@ -702,6 +702,38 @@ function mergeReplyText(previousText, nextText) {
   return previousText + nextText;
 }
 
+function mergeCompletedReplyText(previousText, completedText) {
+  if (!previousText) {
+    return completedText;
+  }
+  if (!completedText) {
+    return previousText;
+  }
+  if (previousText === completedText) {
+    return previousText;
+  }
+
+  const normalizedPrevious = normalizeReplyTextForComparison(previousText);
+  const normalizedCompleted = normalizeReplyTextForComparison(completedText);
+  if (normalizedPrevious && normalizedCompleted) {
+    if (normalizedPrevious === normalizedCompleted) {
+      return completedText.length >= previousText.length ? completedText : previousText;
+    }
+    if (normalizedCompleted.includes(normalizedPrevious)) {
+      return completedText;
+    }
+    if (normalizedPrevious.includes(normalizedCompleted)) {
+      return previousText;
+    }
+  }
+
+  return mergeReplyText(previousText, completedText);
+}
+
+function normalizeReplyTextForComparison(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
 
 function buildApprovalResolvedCard(approval) {
   const resolutionLabel = approval.resolution === "approved" ? "已批准" : "已拒绝";
@@ -1167,5 +1199,6 @@ module.exports = {
   buildThreadPickerCard,
   buildWorkspaceBindingsCard,
   listBoundWorkspaces,
+  mergeCompletedReplyText,
   mergeReplyText,
 };
